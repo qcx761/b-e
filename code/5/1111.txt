@@ -1,0 +1,212 @@
+代码 5-1 （project/c5/a/boot/loader.S）
+1
+%include "boot.inc"
+2
+section loader vstart=LOADER_BASE_ADDR
+3
+LOADER_STACK_TOP equ LOADER_BASE_ADDR
+4
+5 ;构建 gdt 及其内部的描述符
+…略
+此处是定义 GDT，未有新变化
+…略
+20
+times 60 dq 0
+…略
+25
+; total_mem_bytes 用于保存内存容量，以字节为单位，此位置比较好记
+26
+; 当前偏移 loader.bin 文件头 0x200 字节
+; loader.bin 的加载地址是 0x900
+27
+; 故 total_mem_bytes 内存中的地址是 0xb00
+; 将来在内核中咱们会引用此地址
+28
+total_mem_bytes dd 0
+29
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+30
+31;以下是定义 gdt 的指针，前 2 字节是 gdt 界限，后 4 字节是 gdt 起始地址
+32
+gdt_ptr dw GDT_LIMIT
+33
+dd GDT_BASE
+34
+35;人工对齐:total_mem_bytes4+gdt_ptr6+ards_buf244+ards_nr2，共 256 字节
+36
+ards_buf times 244 db 0
+37
+ards_nr dw 0
+;用于记录 ARDS 结构体数量
+38
+39
+loader_start:
+40
+41 ; int 15h eax = 0000E820h ,edx = 534D4150h ('SMAP') 获取内存布局
+42
+43
+xor ebx, ebx
+;第一次调用时，ebx 值要为 0
+44
+mov edx, 0x534d4150
+;edx 只赋值一次，循环体中不会改变
+45
+mov di, ards_buf
+;ards 结构缓冲区
+46 .e820_mem_get_loop:
+;循环获取每个 ARDS 内存范围描述结构
+47
+mov eax， 0x0000e820
+;执行 int 0x15 后，eax 值变为 0x534d4150，
+;所以每次执行 int 前都要更新为子功能号
+48
+mov ecx， 20
+;ARDS 地址范围描述符结构大小是 20 字节
+49
+int 0x15
+50
+jc .e820_failed_so_try_e801
+;若 cf 位为 1 则有错误发生，尝试 0xe801 子功能
+51
+add di, cx
+;使 di 增加 20 字节指向缓冲区中新的 ARDS 结构位置
+52
+inc word [ards_nr]
+;记录 ARDS 数量
+53
+cmp ebx, 0
+;若 ebx 为 0 且 cf 不为 1，这说明 ards 全部返回
+; 当前已是最后一个
+异步社区会员 databus(17602509427) 专享 尊重版权
+181第 5 章 保护模式进阶，向内核迈进
+54
+jnz .e820_mem_get_loop
+55
+56 ;在所有 ards 结构中
+;找出(base_add_low + length_low)的最大值，即内存的容量
+57
+mov cx, [ards_nr]
+;遍历每一个 ARDS 结构体,循环次数是 ARDS 的数量
+58
+mov ebx, ards_buf
+59
+xor edx, edx
+;edx 为最大的内存容量，在此先清 0
+60 .find_max_mem_area:
+;无需判断 type 是否为 1,最大的内存块一定是可被使用的
+61
+mov eax, [ebx]
+;base_add_low
+62
+add eax, [ebx+8]
+;length_low
+63
+add ebx, 20
+;指向缓冲区中下一个 ARDS 结构
+64
+cmp edx, eax
+;冒泡排序,找出最大,edx 寄存器始终是最大的内存容量
+65
+jge .next_ards
+66
+mov edx， eax
+;edx 为总内存大小
+67 .next_ards：
+68
+loop .find_max_mem_area
+69
+jmp .mem_get_ok
+70
+71 ;------ int 15h ax = E801h 获取内存大小，最大支持 4G ------
+72 ; 返回后, ax cx 值一样,以 KB 为单位，bx dx 值一样，以 64KB 为单位
+73 ; 在 ax 和 cx 寄存器中为低 16MB，在 bx 和 dx 寄存器中为 16MB 到 4GB
+74 .e820_failed_so_try_e801：
+75
+mov ax,0xe801
+76
+int 0x15
+77
+jc .e801_failed_so_try88
+;若当前 e801 方法失败，就尝试 0x88 方法
+78
+79 ;1 先算出低 15MB 的内存
+; ax 和 cx 中是以 KB 为单位的内存数量，将其转换为以 byte 为单位
+80
+mov cx,0x400
+;cx 和 ax 值一样，cx 用作乘数
+81
+mul cx
+82
+shl edx,16
+83
+and eax,0x0000FFFF
+84
+or edx,eax
+85
+add edx, 0x100000
+;ax 只是 15MB，故要加 1MB
+86
+mov esi,edx
+;先把低 15MB 的内存容量存入 esi 寄存器备份
+87
+88 ;2 再将 16MB 以上的内存转换为 byte 为单位
+; 寄存器 bx 和 dx 中是以 64KB 为单位的内存数量
+89
+xor eax，eax
+90
+mov ax，bx
+91
+mov ecx， 0x10000
+;0x10000 十进制为 64KB
+92
+mul ecx
+;32 位乘法，默认的被乘数是 eax，积为 64 位
+;高 32 位存入 edx，低 32 位存入 eax
+93
+add esi，eax
+;由于此方法只能测出 4GB 以内的内存，故 32 位 eax 足够了
+; edx 肯定为 0，只加 eax 便可
+94
+mov edx，esi
+;edx 为总内存大小
+95
+jmp .mem_get_ok
+96
+97 ;----- int 15h ah = 0x88 获取内存大小，只能获取 64MB 之内 -----
+98 .e801_failed_so_try88:
+99
+;int 15 后，ax 存入的是以 KB 为单位的内存容量
+100
+mov ah, 0x88
+101
+int 0x15
+102
+jc .error_hlt
+103
+and eax,0x0000FFFF
+104
+105
+;16 位乘法，被乘数是 ax，积为 32 位。积的高 16 位在 dx 中
+;积的低 16 位在 ax 中
+106
+mov cx, 0x400
+;0x400 等于 1024,将 ax 中的内存容量换为以 byte 为单位
+107
+mul cx
+108
+shl edx, 16
+;把 dx 移到高 16 位
+109
+or edx, eax
+;把积的低 16 位组合到 edx，为 32 位的积
+110
+add edx,0x100000
+;0x88 子功能只会返回 1MB 以上的内存
+;故实际内存大小要加上 1MB
+111
+112 .mem_get_ok：
+113
+mov [total_mem_bytes]， edx
+
+
+gdt_ptr
