@@ -4,3 +4,9 @@
 | `gdt_ptr`         | 6B   | GDT 指针（2B 限长 + 4B 起始地址） | 用于 `lgdt [gdt_ptr]` 指令：<br>- `dw limit` 2B → GDT 大小-1<br>- `dd base` 4B → GDT 在内存中的起始地址                           |
 | `ards_buf`        | 244B | 缓冲 BIOS 返回的 ARDS 结构     | 每个 ARDS 结构 20B，最多保存 12 个（12 × 20 = 240），加上 4B padding 或对齐，总共 244B。用于存 BIOS E820 返回的内存段信息（BaseAddr, Length, Type）。 |
 | `ards_nr`         | 2B   | 记录 ARDS 结构体数量           | 每读取一个 ARDS 就 `inc word [ards_nr]`，用 2 字节足够记录 65535 个 ARDS，远大于实际 BIOS 返回数量。                                        |
+
+| 虚拟地址部分 | 位数 | 获取方法                               |
+| ------ | -- | ---------------------------------- |
+| PDE索引  | 10 | `(虚拟地址 >> 22) & 0x3FF` 或直接 `>> 22` |
+| PTE索引  | 10 | `(虚拟地址 >> 12) & 0x3FF`             |
+| 页内偏移   | 12 | `虚拟地址 & 0xFFF`                     |
