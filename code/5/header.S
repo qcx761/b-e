@@ -16,8 +16,6 @@ program_start
 
 mov ax, 0x1234
 
-
-
 jmp $
  program_end:
 
